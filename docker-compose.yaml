@@ -13,8 +13,10 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     privileged: true
-  goserver:
-    build: ./Server
-    image: goserver-app
+  redis:
+    image: redis:7-alpine
+    container_name: redis-server
     ports:
-      - 8000:8000
+      - "6379:6379"
+    networks:
+      - lb_network

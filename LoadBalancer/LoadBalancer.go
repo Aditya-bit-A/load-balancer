@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"container/list"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -11,7 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
-	"strings"
+	"sync"
 
 	"github.com/gin-gonic/gin"
 )
@@ -19,6 +18,12 @@ import (
 const K int = 512 // SLOTS for Servers
 const VSERV int = 9
 const NETWORK_NAME string = "lb_network"
+
+var (
+	serversMap     = make(map[string]*list.Element)
+	serversList    = list.New()
+	serverMapMutex sync.RWMutex
+)
 
 func H(i int) int {
 	hash := (i*i + 2*i + 17) % K
@@ -45,9 +50,6 @@ func (s *serverInstance) getServerID() string {
 	return "Server_" + strconv.Itoa(s.ID)
 }
 
-var serversMap = make(map[string]*list.Element)
-var serversList = list.New()
-
 type ReplicasResponse struct {
 	Message struct {
 		N        int   `json:"N"`
@@ -61,19 +63,19 @@ type AddServerReqPayload struct {
 	HostNames []int `json:"hostnames"`
 }
 
-func forwardRequestToServer(c *gin.Context, path string, serverInst *serverInstance) {
-	// hard coded url with port
-	backendURL := "http://" + serverInst.getContainerHostName() + ":8000/" + path
+func forwardRequestToServer(c *gin.Context, fwdPath string, serverInst *serverInstance) {
+	// Construct backend URL
+	backendURL := "http://" + serverInst.getContainerHostName() + ":8000/" + fwdPath
 
-	// Create a new request to the backend server
-	req, err := http.NewRequest(r.Method, backendURL, r.Body)
+	// Create new request with context from the client request
+	req, err := http.NewRequestWithContext(c.Request.Context(), c.Request.Method, backendURL, c.Request.Body)
 	if err != nil {
-		http.Error(w, "Failed to forward request to backend server :", http.StatusInternalServerError)
+		c.String(http.StatusInternalServerError, "Failed to create request to backend: %v", err)
 		return
 	}
 
-	// Copy headers from the original request
-	for k, v := range r.Header {
+	// Copy headers
+	for k, v := range c.Request.Header {
 		for _, vv := range v {
 			req.Header.Add(k, vv)
 		}
@@ -83,7 +85,7 @@ func forwardRequestToServer(c *gin.Context, path string, serverInst *serverInsta
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		http.Error(w, "Error contacting backend server", http.StatusBadGateway)
+		c.String(http.StatusBadGateway, "Error contacting backend server: %v", err)
 		return
 	}
 	defer resp.Body.Close()
@@ -91,12 +93,15 @@ func forwardRequestToServer(c *gin.Context, path string, serverInst *serverInsta
 	// Copy response headers
 	for k, v := range resp.Header {
 		for _, vv := range v {
-			w.Header().Add(k, vv)
+			c.Writer.Header().Add(k, vv)
 		}
 	}
 
-	w.WriteHeader(resp.StatusCode)
-	io.Copy(w, resp.Body)
+	c.Status(resp.StatusCode)
+	_, err = io.Copy(c.Writer, resp.Body)
+	if err != nil {
+		log.Printf("Error copying response body: %v", err)
+	}
 }
 
 func showList() {
@@ -174,7 +179,26 @@ func addNewServerToList(payload AddServerReqPayload) {
 	}
 
 }
+func searchServerInstance(clientHash int) *serverInstance {
+	if serversList.Len() == 0 {
+		return nil
+	}
+	for e := serversList.Front(); e != nil; e = e.Next() {
+		server := e.Value.(*serverInstance)
+		currentEHash := server.HashVal
+		serverID := server.ID
 
+		fmt.Println("Server Hash:", currentEHash)
+
+		if clientHash < currentEHash {
+			response := fmt.Sprintf("Request Redirected to : %d", serverID)
+			fmt.Println(response)
+			// forward request to the server
+			return server
+		}
+	}
+	return serversList.Front().Value.(*serverInstance)
+}
 func removeServersFromList(payload AddServerReqPayload) {
 
 	for i := 0; i < payload.N; i++ {
@@ -184,8 +208,11 @@ func removeServersFromList(payload AddServerReqPayload) {
 	}
 }
 
-func getReplicas1(c *gin.Context) {
+func getReplicas(c *gin.Context) {
+
+	serverMapMutex.RLock()
 	replicas := getCurrentServersList()
+	serverMapMutex.RUnlock()
 
 	response := ReplicasResponse{
 		Status: "successful",
@@ -209,30 +236,6 @@ func getReplicasGin(c *gin.Context) {
 	c.JSON(http.StatusOK, response)
 }
 
-func getReplicas(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-	fmt.Println("rep endpoint..")
-	// Example replicas - can be dynamically populated from env, config, or service discovery
-	replicas := getCurrentServersList()
-
-	response := ReplicasResponse{
-		Status: "successful",
-	}
-
-	response.Message.N = len(replicas)
-	response.Message.Replicas = replicas
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusOK)
-
-	err := json.NewEncoder(w).Encode(response)
-	if err != nil {
-		log.Println("Error encoding response:", err)
-	}
-}
 func addServersGin(c *gin.Context) {
 	var payload AddServerReqPayload
 
@@ -251,11 +254,15 @@ func addServersGin(c *gin.Context) {
 	// Log the operation
 	log.Printf("Adding %d new servers: %v\n", payload.N, payload.HostNames)
 
+	serverMapMutex.Lock()
 	// Perform the server addition
 	addNewServerToList(payload)
+	serverMapMutex.Unlock()
 
 	// Get updated list of replicas
+	serverMapMutex.RLock()
 	replicas := getCurrentServersList()
+	serverMapMutex.RUnlock()
 
 	// Build and return the response
 	response := ReplicasResponse{
@@ -265,38 +272,6 @@ func addServersGin(c *gin.Context) {
 	response.Message.Replicas = replicas
 
 	c.JSON(http.StatusOK, response)
-}
-func addServers(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var payload AddServerReqPayload
-	err := json.NewDecoder(r.Body).Decode(&payload)
-	if err != nil {
-		http.Error(w, "Invalid request body format.", http.StatusBadRequest)
-		return
-	}
-
-	if payload.N != len(payload.HostNames) {
-		http.Error(w, "Length not matching with list.", http.StatusBadRequest)
-	}
-
-	log.Printf("Adding %d new servers: %v\n", payload.N, payload.HostNames)
-	addNewServerToList(payload)
-
-	w.Header().Set("Content-Type", "application./json")
-	w.WriteHeader(http.StatusOK)
-
-	replicas := getCurrentServersList()
-
-	response := ReplicasResponse{
-		Status: "successful",
-	}
-	response.Message.N = len(replicas)
-	response.Message.Replicas = replicas
-
 }
 
 func removeServersGin(c *gin.Context) {
@@ -312,7 +287,9 @@ func removeServersGin(c *gin.Context) {
 		return
 	}
 
+	serverMapMutex.Lock()
 	removeServersFromList(payload)
+	serverMapMutex.Unlock()
 
 	replicas := []int{1} // Dummy replicas
 	response := ReplicasResponse{
@@ -323,30 +300,7 @@ func removeServersGin(c *gin.Context) {
 
 	c.JSON(http.StatusOK, response)
 }
-func removeServers(w http.ResponseWriter, r *http.Request) {
-	var payload AddServerReqPayload
-	err := json.NewDecoder(r.Body).Decode(&payload)
-	if err != nil {
-		http.Error(w, "Invalid request body format.", http.StatusBadRequest)
-		return
-	}
 
-	if payload.N != len(payload.HostNames) {
-		http.Error(w, "Length not matching with list.", http.StatusBadRequest)
-	}
-
-	removeServersFromList(payload)
-
-	w.Header().Set("Content-Type", "application./json")
-	w.WriteHeader(http.StatusOK)
-	replicas := []int{1}
-	response := ReplicasResponse{
-		Status: "successful",
-	}
-	response.Message.N = len(replicas)
-	response.Message.Replicas = replicas
-
-}
 func requestRedirectGin(c *gin.Context) {
 	// Get the path parameter as a string
 	fwdPath := c.Param("path")
@@ -356,58 +310,14 @@ func requestRedirectGin(c *gin.Context) {
 	clientHash := H(requestId)
 	//fmt.Println("Request Hash:", clientHash)
 
-	for e := serversList.Front(); e != nil; e = e.Next() {
-		server := e.Value.(*serverInstance)
-		currentEHash := server.HashVal
-		serverID := server.ID
-
-		fmt.Println("Server Hash:", currentEHash)
-
-		if clientHash < currentEHash {
-			response := fmt.Sprintf("Request Redirected to : %d", serverID)
-			fmt.Println(response)
-			// forward request to the server
-			forwardRequestToServer(c, fwdPath, server)
-			c.String(http.StatusOK, response)
-			return
-		}
-	}
-
-	// If no match found
-	c.JSON(http.StatusNotFound, gin.H{"error": "No suitable server found for redirection"})
-}
-func requestRedirect(w http.ResponseWriter, r *http.Request) {
-	// Trim the leading and trailing slashes
-	path := strings.Trim(r.URL.Path, "/")
-
-	if path == "" {
-		fmt.Fprintln(w, "Welcome to the root!")
+	serverInst := searchServerInstance(clientHash)
+	if serverInst == nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "No suitable server found for redirection"})
 		return
 	}
-	numpath, _ := strconv.Atoi(path)
-	clientHash := H(numpath)
-	// keys := make([]int, 0, len(serversMap))
-
-	// for k, _ := range serversMap {
-	// 	keys = append(keys, k)
-	// }
-
-	fmt.Println("Req ", clientHash)
-	for e := serversList.Front(); e != nil; e = e.Next() {
-		currentEHash := e.Value.(*serverInstance).HashVal
-		var Id = e.Value.(*serverInstance).ID
-		fmt.Println(currentEHash)
-		if clientHash < currentEHash {
-			response := fmt.Sprintf("Request Redirected to : %d", Id)
-			fmt.Println(response)
-			// send request to the suitable server
-			w.Write([]byte(response))
-			return
-		}
-	}
-
-	// Handle dynamic part
-
+	// forward request to the server
+	var resp = forwardRequestToServer(c, fwdPath, serverInst)
+	c.JSON(http.StatusOK, resp)
 }
 
 func main() {
@@ -417,11 +327,7 @@ func main() {
 	router.GET("/rep", getReplicasGin)
 	router.POST("/add", addServersGin)
 	router.POST("/rem", removeServersGin)
-
-	http.HandleFunc("/", requestRedirect)
-	http.HandleFunc("/rep", getReplicas)
-	http.HandleFunc("/add", addServers)
-	http.HandleFunc("/rem", removeServers)
+	router.GET("/:path", requestRedirectGin)
 
 	var initialPayload AddServerReqPayload
 	initialPayload.N = 3

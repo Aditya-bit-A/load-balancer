@@ -4,7 +4,8 @@ A simple, lightweight Layer 7 load balancer implemented in Go. It distributes in
 
 ## Features
 
-- Supports Round Robin and Least Connections algorithms
+- Supports Round Robin and Hashing algorithms
+- Uses consistent hashing interally.
 - Graceful handling of backend server failures
 - Simple and clean Go implementation
 - Logs incoming requests and backend assignments

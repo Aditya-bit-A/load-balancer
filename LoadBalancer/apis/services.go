@@ -12,7 +12,7 @@ import (
 
 func forwardRequestToServer(c *gin.Context, fwdPath string, serverInst models.ServerMetaData) {
 	// Construct backend URL
-	backendURL := "http://" + serverInst.GetContainerHostName() + ":" + config.GetEnv("BACKEND_PORT", "8000") + "/" + fwdPath
+	backendURL := "http://" + serverInst.GetContainerHostName() + ":" + config.GetEnv("BACKEND_PORT", "80") + "/" + fwdPath
 
 	// Create new request with context from the client request
 	req, err := http.NewRequestWithContext(c.Request.Context(), c.Request.Method, backendURL, c.Request.Body)

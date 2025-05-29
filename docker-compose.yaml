@@ -1,7 +1,4 @@
 version: '4.4'
-networks:
-  lb_network:
-    driver: bridge
 services:
   loadbalancer:
     build: ./LoadBalancer
@@ -20,3 +17,6 @@ services:
       - "6379:6379"
     networks:
       - lb_network
+networks:
+  lb_network:
+    driver: bridge

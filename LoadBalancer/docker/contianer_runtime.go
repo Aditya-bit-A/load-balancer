@@ -33,10 +33,11 @@ func (d *DockerContainerRuntime) CreateNewContainer(inst models.ServerMetaData) 
 		"--network", config.GetEnv("NETWORK_NAME", "loadbalancer"),
 		"--network-alias", inst.GetContainerHostName(),
 		"--name", inst.GetContainerHostName(),
-		"-p", "80:"+config.GetEnv("BACKEND_PORT", "8000"),
 		"--env", "SERVER_ID="+inst.GetServerID(),
-		"serverinst-app",
+		"--env", "PORT="+config.GetEnv("BACKEND_PORT", "7000"),
+		config.GetEnv("SERVER_IMAGE", "WRONG_IMAGE"),
 	)
+	log.Println("Container CMD: ", cmd)
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	//cmd.Stderr = &out

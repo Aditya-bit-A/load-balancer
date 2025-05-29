@@ -9,6 +9,14 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+// GetReplicasHandler godoc
+// @Summary      Get server replicas
+// @Description  Returns the list of server replicas managed by the load balancer
+// @Tags         servers
+// @Produce      json
+// @Success      200  {array}   models.ReplicasResponse
+// @Failure      500  {object}  map[string]string
+// @Router       /rep [get]
 func GetReplicasHandler(manager *server.DefaultServerManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Get the current list of servers
@@ -26,6 +34,16 @@ func GetReplicasHandler(manager *server.DefaultServerManager) gin.HandlerFunc {
 	}
 }
 
+// AddServersHandler godoc
+// @Summary      Add new server instances
+// @Description  Adds new server instances to the load balancer
+// @Tags         servers
+// @Accept       json
+// @Produce      json
+// @Param        payload  body  models.AddServerReqPayload  true  "Add server payload"
+// @Success      200  {object}  map[string]string
+// @Failure      400  {object}  map[string]string
+// @Router       /add [post]
 func AddServersHandler(manager *server.DefaultServerManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var payload models.AddServerReqPayload
@@ -62,6 +80,16 @@ func AddServersHandler(manager *server.DefaultServerManager) gin.HandlerFunc {
 	}
 }
 
+// RemoveServersHandler godoc
+// @Summary      Remove server instances
+// @Description  Removes one or more server instances from the load balancer
+// @Tags         servers
+// @Accept       json
+// @Produce      json
+// @Param        payload  body  models.AddServerReqPayload  true  "Payload to remove server instances"
+// @Success      200  {object}  models.ReplicasResponse
+// @Failure      400  {object}  map[string]string
+// @Router       /rem [post]
 func RemoveServersHandler(manager *server.DefaultServerManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var payload models.AddServerReqPayload
@@ -89,6 +117,16 @@ func RemoveServersHandler(manager *server.DefaultServerManager) gin.HandlerFunc 
 	}
 }
 
+// RequestRedirectHandler godoc
+// @Summary      Redirect request to a backend server
+// @Description  Forwards the client request to a selected server based on load balancing
+// @Tags         routing
+// @Accept       json
+// @Produce      json
+// @Param        path  path  string  true  "Path to be forwarded"
+// @Success      200  {object}  string
+// @Failure      404  {object}  map[string]string
+// @Router       /{path} [get]
 func RequestRedirectHandler(manager *server.DefaultServerManager) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Get the path parameter as a string
@@ -99,6 +137,7 @@ func RequestRedirectHandler(manager *server.DefaultServerManager) gin.HandlerFun
 		clientHash := models.H(requestId)
 
 		serverInst := manager.SearchServerInstance(clientHash)
+		log.Printf("Reuqest Redirect :- Request ID: %s, Client Hash: %d, Selected Server: %s", requestId, clientHash, serverInst.GetContainerHostName())
 		if serverInst == nil {
 			c.JSON(http.StatusNotFound, gin.H{"error": "No suitable server found for redirection"})
 			return

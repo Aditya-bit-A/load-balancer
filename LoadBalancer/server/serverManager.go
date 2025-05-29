@@ -73,6 +73,17 @@ func (s *DefaultServerManager) insertNewInstanceOnSystem(hashValue int, inst mod
 	}
 }
 
+func (s *DefaultServerManager) InitalizeServers(N int) {
+	for i := 0; i < N; i++ {
+		ID := "DefaultServer" + fmt.Sprint(i+1)
+		hashValue := models.SH(ID, 1)
+		inst := NewServerInstance(ID, "Type1")
+		// Insert this server Instance details on the load balancer (Can be any server instance)
+		s.insertNewInstanceOnSystem(hashValue, inst) // Insert instance logic depends on the load balancer implementation
+		s.containerRuntime.CreateNewContainer(inst)
+	}
+}
+
 func (s *DefaultServerManager) AddNewServerInstances(payload models.AddServerReqPayload) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

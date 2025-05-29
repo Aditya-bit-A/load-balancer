@@ -1,0 +1,139 @@
+basePath: /
+definitions:
+  models.AddServerReqPayload:
+    properties:
+      hostnames:
+        items:
+          type: string
+        type: array
+      "n":
+        type: integer
+    type: object
+  models.ReplicasResponse:
+    properties:
+      message:
+        properties:
+          "N":
+            type: integer
+          replicas:
+            items:
+              type: string
+            type: array
+        type: object
+      status:
+        type: string
+    type: object
+info:
+  contact: {}
+  description: This is the API documentation for the load balancer
+  title: Load Balancer API
+  version: "1.0"
+paths:
+  /{path}:
+    get:
+      consumes:
+      - application/json
+      description: Forwards the client request to a selected server based on load
+        balancing
+      parameters:
+      - description: Path to be forwarded
+        in: path
+        name: path
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            type: string
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Redirect request to a backend server
+      tags:
+      - routing
+  /add:
+    post:
+      consumes:
+      - application/json
+      description: Adds new server instances to the load balancer
+      parameters:
+      - description: Add server payload
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/models.AddServerReqPayload'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Add new server instances
+      tags:
+      - servers
+  /rem:
+    post:
+      consumes:
+      - application/json
+      description: Removes one or more server instances from the load balancer
+      parameters:
+      - description: Payload to remove server instances
+        in: body
+        name: payload
+        required: true
+        schema:
+          $ref: '#/definitions/models.AddServerReqPayload'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.ReplicasResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Remove server instances
+      tags:
+      - servers
+  /rep:
+    get:
+      description: Returns the list of server replicas managed by the load balancer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/models.ReplicasResponse'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get server replicas
+      tags:
+      - servers
+swagger: "2.0"
